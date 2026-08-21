@@ -5,7 +5,7 @@ A native OBS Studio plugin prototype that postpones an upcoming Twitch automatic
 The first implemented condition is activity on explicitly selected OBS audio sources. The product design also includes Twitch chat activity, raids, hype events, and configurable rule combinations.
 
 > [!IMPORTANT]
-> This repository is an **early developer prototype**, not an installable end-user release. Audio monitoring, ad schedule polling, dry-run decisions, and the Twitch snooze API call are implemented. The Twitch login UI, secure token storage, EventSub chat transport, settings dock, and signed packages are still on the roadmap.
+> This repository is an **early developer prototype**, not an end-user release. Audio monitoring, ad-schedule polling, dry-run decisions, the Twitch snooze API call, and a macOS development bundle pipeline are implemented. Twitch login UI, secure token storage, EventSub chat transport, settings UI, notarization, and supported installers are still on the roadmap.
 
 This project is not affiliated with or endorsed by Twitch or OBS Project.
 
@@ -32,16 +32,17 @@ Implemented now:
 - Safety controls: disabled-by-default configuration, dry-run by default, lead window, retry cooldown, reserved snooze count, and duplicate-attempt prevention.
 - Rolling chat-activity and unique-chatter calculation as a transport-independent core component.
 - Cross-platform core tests on Linux, macOS, and Windows through GitHub Actions.
+- Official-template-compatible build metadata and a verified universal macOS development bundle workflow.
 
 Not implemented yet:
 
 - Twitch EventSub WebSocket connection and `channel.chat.message` subscription.
 - In-OBS Twitch login, refresh-token handling, or operating-system credential storage.
 - A user-facing settings dock and rule builder.
-- Release packaging, signing, and automatic installation.
+- Notarized release packaging and supported automatic installation.
 - Speech-only VAD. The current filter detects audible energy, not semantic speech.
 
-See [Architecture](docs/architecture.md), [Roadmap](docs/roadmap.md), and [Manual test guide](docs/manual-test.md).
+See [Architecture](docs/architecture.md), [Roadmap](docs/roadmap.md), [Manual test guide](docs/manual-test.md), and [macOS development build](docs/macos-dev-build.md).
 
 ## Decision model
 
@@ -63,7 +64,8 @@ src/obs/        OBS audio filter, state registry, config, and worker runtime
 src/twitch/     Twitch Helix API client
 tests/          Dependency-free core unit tests
 data/locale/    OBS localization strings
-docs/           Architecture, roadmap, and validation notes
+docs/           Architecture, roadmap, build, and validation notes
+scripts/        Reproducible development build entry points
 ```
 
 ## Build and test the core
@@ -76,21 +78,39 @@ cmake --build build --parallel
 ctest --test-dir build --output-on-failure
 ```
 
-## Build the OBS module for development
+## Build an OBS-loadable macOS development bundle
 
-Prerequisites:
+The macOS build overlays this project onto a pinned revision of the official OBS plugin template, uses the dependency hashes in `buildspec.json`, and verifies that the resulting bundle is ad-hoc signed and universal.
 
-- CMake 3.20 or newer
-- A C++20 compiler
-- OBS Studio development files exposing the `OBS::libobs` CMake target
-- libcurl development files
+```bash
+brew install cmake jq ccache xcbeautify
+scripts/build-macos-dev
+```
+
+Output:
+
+```text
+release/RelWithDebInfo/obs-tw-adsnooze.plugin
+```
+
+To replace the current user's development copy after quitting OBS:
+
+```bash
+scripts/build-macos-dev --install
+```
+
+See [`docs/macos-dev-build.md`](docs/macos-dev-build.md) for prerequisites, verification, CI artifacts, and troubleshooting. The generated artifact is for development testing only; it is not notarized or supported as a public release.
+
+## Build against an existing OBS development SDK
+
+A conventional CMake path remains available for developers that already expose the `OBS::libobs` target and libcurl to CMake:
 
 ```bash
 cmake -S . -B build-plugin -DBUILD_OBS_PLUGIN=ON -DBUILD_TESTING=ON
 cmake --build build-plugin --parallel
 ```
 
-The current CMake setup builds the module but is not yet a full release-packaging pipeline. The official OBS plugin template and platform-specific installers will be adopted before the first public alpha.
+When the official template support files are present, `CMakePresets.json` and `buildspec.json` drive the bundle layout. Without them, the same CMake file retains the lightweight core-test and external-SDK paths.
 
 ## Developer-only configuration
 
@@ -112,8 +132,8 @@ The manual token is currently stored as plaintext in the OBS configuration direc
 
 OBS上で選択した音声ソースが鳴っているとき、または将来的にチャットが盛り上がっているときに、直前のTwitch自動広告を5分延期するためのプラグインです。
 
-現段階は開発者向け初期実装です。音声判定、広告予定取得、判定ロジック、dry-run、広告スヌーズAPI呼び出しまで実装済みです。一般配布に必要なTwitchログイン画面、チャットEventSub接続、設定画面、署名済みインストーラーは未実装です。
+現段階は開発者向け初期実装です。音声判定、広告予定取得、判定ロジック、dry-run、広告スヌーズAPI呼び出しに加え、公式OBSプラグインテンプレートを利用したmacOS Universal開発ビルドまで用意しています。一般配布に必要なTwitchログイン画面、チャットEventSub接続、設定画面、署名・公証済みインストーラーは未実装です。
 
 ## License
 
-GPL-2.0. See [`LICENSE`](LICENSE).
+GPL-2.0-or-later. See [`LICENSE`](LICENSE).

@@ -1,5 +1,8 @@
 /build/
 /build-*/
+/build_macos/
+/release/
+/.deps/
 .cache/
 .idea/
 .vscode/
