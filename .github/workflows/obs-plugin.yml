@@ -1,0 +1,46 @@
+name: OBS Plugin Build
+
+on:
+  push:
+    branches: [main, "feat/**", "fix/**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  macos-universal:
+    name: macOS universal plugin
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Select supported Xcode
+        run: |
+          if [[ -d /Applications/Xcode_16.1.0.app ]]; then
+            sudo xcode-select --switch /Applications/Xcode_16.1.0.app/Contents/Developer
+          fi
+          xcodebuild -version
+
+      - name: Install template build tools
+        run: |
+          brew list ccache >/dev/null 2>&1 || brew install ccache
+          brew list xcbeautify >/dev/null 2>&1 || brew install xcbeautify
+
+      - name: Restore OBS dependency cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/obs-template-deps
+          key: obs-plugin-macos-31.1.1-2025-07-11-v1
+
+      - name: Build and verify universal bundle
+        run: scripts/build-macos-dev --config RelWithDebInfo
+
+      - name: Upload development plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: obs-tw-adsnooze-0.1.0-macos-universal-${{ github.sha }}
+          path: release/RelWithDebInfo/obs-tw-adsnooze.plugin
+          if-no-files-found: error
