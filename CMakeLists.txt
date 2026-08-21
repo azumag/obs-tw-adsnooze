@@ -1,10 +1,21 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.28...3.30)
 
-project(obs-tw-adsnooze VERSION 0.1.0 LANGUAGES CXX)
+set(ADSNOOZE_USING_OBS_TEMPLATE OFF)
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/cmake/common/bootstrap.cmake")
+  include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/common/bootstrap.cmake" NO_POLICY_SCOPE)
+  project(${_name} VERSION ${_version} LANGUAGES C CXX)
+  set(ADSNOOZE_USING_OBS_TEMPLATE ON)
+
+  include(compilerconfig)
+  include(defaults)
+  include(helpers)
+else()
+  project(obs-tw-adsnooze VERSION 0.1.0 LANGUAGES CXX)
+endif()
 
 include(CTest)
 
-option(BUILD_OBS_PLUGIN "Build the native OBS plugin module" OFF)
+option(BUILD_OBS_PLUGIN "Build the native OBS plugin module" ${ADSNOOZE_USING_OBS_TEMPLATE})
 
 add_library(
   adsnooze-core STATIC
@@ -53,12 +64,12 @@ if(BUILD_OBS_PLUGIN)
 
   if(COMMAND set_target_properties_plugin)
     set_target_properties_plugin(${PROJECT_NAME} PROPERTIES OUTPUT_NAME ${PROJECT_NAME})
+  else()
+    install(
+      TARGETS ${PROJECT_NAME}
+      RUNTIME DESTINATION "obs-plugins/64bit"
+      LIBRARY DESTINATION "obs-plugins/64bit"
+    )
+    install(DIRECTORY data/ DESTINATION "data/obs-plugins/${PROJECT_NAME}")
   endif()
-
-  install(
-    TARGETS ${PROJECT_NAME}
-    RUNTIME DESTINATION "obs-plugins/64bit"
-    LIBRARY DESTINATION "obs-plugins/64bit"
-  )
-  install(DIRECTORY data/ DESTINATION "data/obs-plugins/${PROJECT_NAME}")
 endif()
