@@ -7,6 +7,6 @@ namespace adsnooze {
 using MonotonicClock = std::chrono::steady_clock;
 using MonotonicTimePoint = MonotonicClock::time_point;
 using WallClock = std::chrono::system_clock;
-using WallTimePoint = WallClock::time_point;
+using WallTimePoint = std::chrono::time_point<WallClock, std::chrono::nanoseconds>;
 
 } // namespace adsnooze
