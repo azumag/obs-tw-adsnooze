@@ -73,10 +73,13 @@ configuring any Twitch credential.
 
 ## CI artifact
 
-The `OBS Plugin Build` workflow performs the same universal build and uploads
-the `.plugin` bundle as a pull-request artifact. This is a development artifact:
-it is ad-hoc signed, not notarized, and must not be presented as a public macOS
-release.
+The `OBS Plugin Build` workflow performs the same universal build and publishes
+`obs-tw-adsnooze-0.1.0-macos-universal.zip` as a direct GitHub Actions artifact.
+The ZIP is created with `ditto --keepParent`, so extracting it produces the
+`obs-tw-adsnooze.plugin` bundle rather than a loose `Contents` directory.
+
+This is a development artifact: it is ad-hoc signed, not notarized, and must not
+be presented as a public macOS release.
 
 ## Troubleshooting
 

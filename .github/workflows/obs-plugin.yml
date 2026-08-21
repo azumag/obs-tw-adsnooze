@@ -30,7 +30,7 @@ jobs:
           brew list xcbeautify >/dev/null 2>&1 || brew install xcbeautify
 
       - name: Restore OBS dependency cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: .cache/obs-template-deps
           key: obs-plugin-macos-31.1.1-2025-07-11-v1
@@ -38,9 +38,20 @@ jobs:
       - name: Build and verify universal bundle
         run: scripts/build-macos-dev --config RelWithDebInfo
 
+      - name: Package development artifact
+        run: |
+          artifact="release/obs-tw-adsnooze-0.1.0-macos-universal.zip"
+          rm -f "$artifact"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "release/RelWithDebInfo/obs-tw-adsnooze.plugin" \
+            "$artifact"
+          unzip -l "$artifact"
+          shasum -a 256 "$artifact"
+
       - name: Upload development plugin
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: obs-tw-adsnooze-0.1.0-macos-universal-${{ github.sha }}
-          path: release/RelWithDebInfo/obs-tw-adsnooze.plugin
+          path: release/obs-tw-adsnooze-0.1.0-macos-universal.zip
+          archive: false
           if-no-files-found: error
+          retention-days: 30
