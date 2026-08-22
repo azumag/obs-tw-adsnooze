@@ -281,10 +281,8 @@ ApiResult<TokenValidation> TwitchAdClient::validate_token() const
 
     // obs_data_t intentionally ignores arrays of primitive values, so scan the raw
     // JSON scopes array instead of matching scope text anywhere in the body.
-    result.value.has_read_ads_scope =
-        contains_json_string_array_value(response.body, "scopes", "channel:read:ads");
-    result.value.has_manage_ads_scope =
-        contains_json_string_array_value(response.body, "scopes", "channel:manage:ads");
+    result.value.has_read_ads_scope = contains_json_string_array_value(response.body, "scopes", "channel:read:ads");
+    result.value.has_manage_ads_scope = contains_json_string_array_value(response.body, "scopes", "channel:manage:ads");
     result.ok = true;
     return result;
 }

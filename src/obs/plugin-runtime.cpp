@@ -143,11 +143,13 @@ void PluginRuntime::run()
                 blog(LOG_INFO, "[obs-tw-adsnooze] Twitch token validated");
             } else {
                 next_validation = monotonic_now + 60s;
-                blog(LOG_ERROR,
-                     "[obs-tw-adsnooze] Twitch token validation failed or required ad scopes are missing "
-                     "(HTTP %ld): %s",
-                     validation.http_status,
-                     validation.error.empty() ? "identity/scope mismatch" : validation.error.c_str());
+                if (!stopping_.load(std::memory_order_acquire)) {
+                    blog(LOG_ERROR,
+                         "[obs-tw-adsnooze] Twitch token validation failed or required ad scopes are missing "
+                         "(HTTP %ld): %s",
+                         validation.http_status,
+                         validation.error.empty() ? "identity/scope mismatch" : validation.error.c_str());
+                }
             }
         }
 
@@ -158,11 +160,13 @@ void PluginRuntime::run()
         if (token_valid) {
             const auto schedule_result = client.get_ad_schedule();
             if (!schedule_result.ok) {
-                blog(LOG_WARNING, "[obs-tw-adsnooze] Could not read ad schedule (HTTP %ld): %s",
-                     schedule_result.http_status, schedule_result.error.c_str());
-                if (schedule_result.http_status == 401) {
-                    token_valid = false;
-                    next_validation = MonotonicClock::now();
+                if (!stopping_.load(std::memory_order_acquire)) {
+                    blog(LOG_WARNING, "[obs-tw-adsnooze] Could not read ad schedule (HTTP %ld): %s",
+                         schedule_result.http_status, schedule_result.error.c_str());
+                    if (schedule_result.http_status == 401) {
+                        token_valid = false;
+                        next_validation = MonotonicClock::now();
+                    }
                 }
             } else {
                 const CombinedActivitySnapshot activity = collect_activity();
@@ -203,8 +207,10 @@ void PluginRuntime::run()
                                  decision.audio_triggered ? "true" : "false",
                                  decision.chat_triggered ? "true" : "false", snooze_result.value.snooze_count);
                         } else {
-                            blog(LOG_WARNING, "[obs-tw-adsnooze] Snooze request failed (HTTP %ld): %s",
-                                 snooze_result.http_status, snooze_result.error.c_str());
+                            if (!stopping_.load(std::memory_order_acquire)) {
+                                blog(LOG_WARNING, "[obs-tw-adsnooze] Snooze request failed (HTTP %ld): %s",
+                                     snooze_result.http_status, snooze_result.error.c_str());
+                            }
                             if (snooze_result.http_status == 401) {
                                 token_valid = false;
                                 next_validation = MonotonicClock::now();
