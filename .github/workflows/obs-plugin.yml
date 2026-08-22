@@ -2,7 +2,7 @@ name: OBS Plugin Build
 
 on:
   push:
-    branches: [main, "feat/**", "fix/**"]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

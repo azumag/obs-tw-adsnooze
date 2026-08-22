@@ -6,11 +6,14 @@
 #include <obs-module.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <limits>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace adsnooze::twitch {
 namespace {
@@ -27,6 +30,15 @@ struct HttpResponse {
     std::string body;
     std::string error;
 };
+
+int transfer_progress(void *clientp, curl_off_t, curl_off_t, curl_off_t, curl_off_t)
+{
+    const auto *stop_flag = static_cast<const std::atomic_bool *>(clientp);
+    if (stop_flag != nullptr && stop_flag->load(std::memory_order_acquire)) {
+        return 1;
+    }
+    return 0;
+}
 
 std::size_t write_response(char *data, std::size_t size, std::size_t count, void *user_data)
 {
@@ -52,7 +64,8 @@ bool append_header(curl_slist *&headers, const std::string &value)
     return true;
 }
 
-HttpResponse request(std::string url, const std::string &access_token, const std::string *client_id, bool post)
+HttpResponse request(std::string url, const std::string &access_token, const std::string *client_id, bool post,
+                     const std::atomic_bool *stop_flag)
 {
     HttpResponse response;
     CURL *curl = curl_easy_init();
@@ -90,6 +103,9 @@ HttpResponse request(std::string url, const std::string &access_token, const std
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_response);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response.body);
     curl_easy_setopt(curl, CURLOPT_ERRORBUFFER, curl_error);
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, transfer_progress);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, stop_flag);
     if (post) {
         curl_easy_setopt(curl, CURLOPT_POST, 1L);
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "");
@@ -106,6 +122,59 @@ HttpResponse request(std::string url, const std::string &access_token, const std
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
     return response;
+}
+
+std::vector<std::string> extract_json_string_array(const std::string &json, const char *key)
+{
+    const std::string needle = "\"" + std::string(key) + "\"";
+    const std::size_t key_position = json.find(needle);
+    if (key_position == std::string::npos) {
+        return {};
+    }
+
+    const std::size_t array_start = json.find('[', key_position + needle.size());
+    if (array_start == std::string::npos) {
+        return {};
+    }
+
+    std::vector<std::string> values;
+    std::size_t position = array_start + 1;
+    bool in_string = false;
+    std::string current;
+    while (position < json.size()) {
+        const char character = json[position];
+        if (in_string) {
+            if (character == '\\' && position + 1 < json.size()) {
+                current.push_back(json[position + 1]);
+                position += 2;
+                continue;
+            }
+            if (character == '"') {
+                values.push_back(current);
+                current.clear();
+                in_string = false;
+            } else {
+                current.push_back(character);
+            }
+        } else if (character == '"') {
+            in_string = true;
+            current.clear();
+        } else if (character == ']') {
+            break;
+        }
+        ++position;
+    }
+    return values;
+}
+
+bool contains_json_string_array_value(const std::string &json, const char *key, std::string_view value)
+{
+    for (const std::string &entry : extract_json_string_array(json, key)) {
+        if (entry == value) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::string api_error_message(const HttpResponse &response)
@@ -189,7 +258,8 @@ TwitchAdClient::TwitchAdClient(std::string client_id, std::string access_token, 
 
 ApiResult<TokenValidation> TwitchAdClient::validate_token() const
 {
-    const HttpResponse response = request("https://id.twitch.tv/oauth2/validate", access_token_, nullptr, false);
+    const HttpResponse response =
+        request("https://id.twitch.tv/oauth2/validate", access_token_, nullptr, false, stop_flag_);
     ApiResult<TokenValidation> result;
     result.http_status = response.status;
     if (!response.transport_ok || response.status < 200 || response.status >= 300) {
@@ -209,10 +279,12 @@ ApiResult<TokenValidation> TwitchAdClient::validate_token() const
     result.value.user_id = user_id ? user_id : "";
     obs_data_release(root);
 
-    // obs_data_t intentionally ignores arrays of primitive values, so inspect the
-    // original JSON for the two exact scope strings returned by Twitch.
-    result.value.has_read_ads_scope = response.body.find("\"channel:read:ads\"") != std::string::npos;
-    result.value.has_manage_ads_scope = response.body.find("\"channel:manage:ads\"") != std::string::npos;
+    // obs_data_t intentionally ignores arrays of primitive values, so scan the raw
+    // JSON scopes array instead of matching scope text anywhere in the body.
+    result.value.has_read_ads_scope =
+        contains_json_string_array_value(response.body, "scopes", "channel:read:ads");
+    result.value.has_manage_ads_scope =
+        contains_json_string_array_value(response.body, "scopes", "channel:manage:ads");
     result.ok = true;
     return result;
 }
@@ -221,14 +293,14 @@ ApiResult<AdSchedule> TwitchAdClient::get_ad_schedule() const
 {
     const std::string url =
         "https://api.twitch.tv/helix/channels/ads?broadcaster_id=" + broadcaster_id_;
-    return parse_schedule_response(request(url, access_token_, &client_id_, false), true);
+    return parse_schedule_response(request(url, access_token_, &client_id_, false, stop_flag_), true);
 }
 
 ApiResult<AdSchedule> TwitchAdClient::snooze_next_ad() const
 {
     const std::string url =
         "https://api.twitch.tv/helix/channels/ads/schedule/snooze?broadcaster_id=" + broadcaster_id_;
-    return parse_schedule_response(request(url, access_token_, &client_id_, true), false);
+    return parse_schedule_response(request(url, access_token_, &client_id_, true, stop_flag_), false);
 }
 
 } // namespace adsnooze::twitch

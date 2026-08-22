@@ -126,6 +126,11 @@ PluginConfig load_or_create_config()
         return config;
     }
 
+    if (obs_data_get_int(root, "schema_version") > 1) {
+        blog(LOG_WARNING,
+             "[obs-tw-adsnooze] Config schema version is newer than supported; unknown settings are ignored");
+    }
+
     config.enabled = get_bool(root, "enabled", false);
     config.dry_run = get_bool(root, "dry_run", true);
     config.poll_interval = std::chrono::seconds{static_cast<std::chrono::seconds::rep>(

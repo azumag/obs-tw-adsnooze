@@ -124,11 +124,13 @@ void PluginRuntime::run()
 
     twitch::TwitchAdClient client(config_.twitch.client_id, config_.twitch.access_token,
                                   config_.twitch.broadcaster_id);
+    client.set_stop_flag(stopping_);
     auto next_validation = MonotonicTimePoint::min();
     bool token_valid = false;
     std::optional<SnoozeDecisionCode> last_logged_decision;
+    std::optional<WallTimePoint> last_logged_ad_at;
 
-    while (!stopping_.load(std::memory_order_acquire)) {
+    auto process_iteration = [&] {
         const auto monotonic_now = MonotonicClock::now();
         if (monotonic_now >= next_validation) {
             const auto validation = client.validate_token();
@@ -149,6 +151,10 @@ void PluginRuntime::run()
             }
         }
 
+        if (stopping_.load(std::memory_order_acquire)) {
+            return;
+        }
+
         if (token_valid) {
             const auto schedule_result = client.get_ad_schedule();
             if (!schedule_result.ok) {
@@ -163,13 +169,20 @@ void PluginRuntime::run()
                 const WallTimePoint wall_now = WallClock::now();
                 const SnoozeDecision decision = decision_engine_.evaluate(wall_now, schedule_result.value, activity);
 
-                if (!last_logged_decision || *last_logged_decision != decision.code) {
+                if (!last_logged_decision || *last_logged_decision != decision.code ||
+                    last_logged_ad_at != schedule_result.value.next_ad_at) {
+                    const long long next_ad_epoch = schedule_result.value.next_ad_at
+                                                        ? std::chrono::duration_cast<std::chrono::seconds>(
+                                                              schedule_result.value.next_ad_at->time_since_epoch())
+                                                              .count()
+                                                        : -1LL;
                     blog(LOG_DEBUG,
-                         "[obs-tw-adsnooze] Decision=%s active_audio_sources=%zu chat_messages=%zu "
-                         "unique_chatters=%zu snoozes=%d",
-                         to_string(decision.code), activity.active_audio_sources, activity.chat_messages,
-                         activity.unique_chatters, schedule_result.value.snooze_count);
+                         "[obs-tw-adsnooze] Decision=%s next_ad_epoch=%lld active_audio_sources=%zu "
+                         "chat_messages=%zu unique_chatters=%zu snoozes=%d",
+                         to_string(decision.code), next_ad_epoch, activity.active_audio_sources,
+                         activity.chat_messages, activity.unique_chatters, schedule_result.value.snooze_count);
                     last_logged_decision = decision.code;
+                    last_logged_ad_at = schedule_result.value.next_ad_at;
                 }
 
                 if (decision.should_snooze() && schedule_result.value.next_ad_at) {
@@ -181,7 +194,7 @@ void PluginRuntime::run()
                              decision.audio_triggered ? "true" : "false", decision.chat_triggered ? "true" : "false",
                              activity.active_audio_sources);
                         succeeded = true;
-                    } else {
+                    } else if (!stopping_.load(std::memory_order_acquire)) {
                         const auto snooze_result = client.snooze_next_ad();
                         succeeded = snooze_result.ok;
                         if (succeeded) {
@@ -201,6 +214,16 @@ void PluginRuntime::run()
                     decision_engine_.record_attempt(wall_now, *schedule_result.value.next_ad_at, succeeded);
                 }
             }
+        }
+    };
+
+    while (!stopping_.load(std::memory_order_acquire)) {
+        try {
+            process_iteration();
+        } catch (const std::exception &error) {
+            blog(LOG_ERROR, "[obs-tw-adsnooze] Schedule worker iteration failed: %s", error.what());
+        } catch (...) {
+            blog(LOG_ERROR, "[obs-tw-adsnooze] Schedule worker iteration failed with an unknown exception");
         }
 
         std::unique_lock lock(wait_mutex_);

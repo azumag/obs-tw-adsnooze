@@ -2,6 +2,7 @@
 
 #include "core/snooze-policy.hpp"
 
+#include <atomic>
 #include <string>
 
 namespace adsnooze::twitch {
@@ -24,6 +25,9 @@ class TwitchAdClient {
 public:
     TwitchAdClient(std::string client_id, std::string access_token, std::string broadcaster_id);
 
+    // The runtime owns the flag; the client only reads it to abort in-flight requests.
+    void set_stop_flag(const std::atomic_bool &flag) noexcept { stop_flag_ = &flag; }
+
     [[nodiscard]] ApiResult<TokenValidation> validate_token() const;
     [[nodiscard]] ApiResult<AdSchedule> get_ad_schedule() const;
     [[nodiscard]] ApiResult<AdSchedule> snooze_next_ad() const;
@@ -32,6 +36,7 @@ private:
     std::string client_id_;
     std::string access_token_;
     std::string broadcaster_id_;
+    const std::atomic_bool *stop_flag_{nullptr};
 };
 
 } // namespace adsnooze::twitch
