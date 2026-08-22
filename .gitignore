@@ -1,0 +1,13 @@
+/build/
+/build-*/
+/build_macos/
+/release/
+/.deps/
+.cache/
+.idea/
+.vscode/
+.DS_Store
+CMakeUserPresets.json
+compile_commands.json
+*.swp
+*.swo

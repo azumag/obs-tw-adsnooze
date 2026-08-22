@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+readonly default_template_ref="3e7d7ac3b5342cd7d9b88890b9c70b472d1520fc"
+readonly repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+config="RelWithDebInfo"
+install_bundle=false
+keep_workdir=false
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/build-macos-dev [--config CONFIG] [--install] [--keep-workdir]
+
+Builds a universal macOS OBS plugin bundle through the official OBS plugin
+template toolchain. The template revision is pinned and may be overridden with
+OBS_PLUGIN_TEMPLATE_REF. Downloaded OBS dependencies are cached under .cache/.
+USAGE
+}
+
+while (($#)); do
+  case "$1" in
+    --config)
+      [[ $# -ge 2 ]] || { echo "--config requires a value" >&2; exit 2; }
+      config="$2"
+      shift 2
+      ;;
+    --install)
+      install_bundle=true
+      shift
+      ;;
+    --keep-workdir)
+      keep_workdir=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+case "$config" in
+  Debug|RelWithDebInfo|Release|MinSizeRel) ;;
+  *) echo "Unsupported configuration: $config" >&2; exit 2 ;;
+esac
+
+[[ "$(uname -s)" == "Darwin" ]] || {
+  echo "This build entry point must run on macOS." >&2
+  exit 1
+}
+
+for command in git rsync zsh cmake jq xcodebuild ccache xcbeautify file lipo otool codesign; do
+  command -v "$command" >/dev/null 2>&1 || {
+    echo "Missing required command: $command" >&2
+    echo "See docs/macos-dev-build.md for prerequisites." >&2
+    exit 1
+  }
+done
+
+template_ref="${OBS_PLUGIN_TEMPLATE_REF:-$default_template_ref}"
+cache_root="${OBS_TEMPLATE_CACHE_DIR:-$repo_root/.cache/obs-template-deps}"
+work_root="$(mktemp -d "${TMPDIR:-/tmp}/obs-tw-adsnooze.XXXXXX")"
+build_root="$work_root/project"
+
+cleanup() {
+  if [[ "$keep_workdir" == true ]]; then
+    echo "Kept build workspace: $work_root"
+  else
+    rm -rf "$work_root"
+  fi
+}
+trap cleanup EXIT
+
+mkdir -p "$cache_root"
+
+echo "Checking out OBS plugin template $template_ref"
+git clone --quiet https://github.com/obsproject/obs-plugintemplate.git "$build_root"
+git -C "$build_root" checkout --quiet --detach "$template_ref"
+
+# Keep the official template build support, then overlay this repository's
+# source, metadata, and CMake entry point without copying generated outputs.
+rsync -a \
+  --exclude '.git/' \
+  --exclude '.cache/' \
+  --exclude 'build/' \
+  --exclude 'build-*/' \
+  --exclude 'build_macos/' \
+  --exclude 'release/' \
+  "$repo_root/" "$build_root/"
+
+rm -rf "$build_root/.deps"
+ln -s "$cache_root" "$build_root/.deps"
+
+export CI=1
+export GITHUB_EVENT_NAME="${GITHUB_EVENT_NAME:-workflow_dispatch}"
+export CODESIGN_IDENT="${CODESIGN_IDENT:--}"
+
+"$build_root/.github/scripts/build-macos" --config "$config"
+
+rm -rf "$repo_root/release/$config"
+mkdir -p "$repo_root/release"
+rsync -a "$build_root/release/" "$repo_root/release/"
+
+bundle="$(find "$repo_root/release/$config" -maxdepth 2 -type d -name 'obs-tw-adsnooze.plugin' -print -quit)"
+[[ -n "$bundle" ]] || {
+  echo "Build completed, but obs-tw-adsnooze.plugin was not found." >&2
+  exit 1
+}
+
+binary="$bundle/Contents/MacOS/obs-tw-adsnooze"
+[[ -x "$binary" ]] || {
+  echo "Plugin binary was not found at $binary" >&2
+  exit 1
+}
+
+codesign --force --deep --sign - "$bundle" >/dev/null
+codesign --verify --deep --strict "$bundle"
+
+architectures="$(lipo -archs "$binary")"
+[[ "$architectures" == *arm64* && "$architectures" == *x86_64* ]] || {
+  echo "Expected a universal binary, got: $architectures" >&2
+  exit 1
+}
+
+file "$binary"
+otool -L "$binary"
+echo "Verified architectures: $architectures"
+echo "Development bundle: $bundle"
+
+if [[ "$install_bundle" == true ]]; then
+  install_root="$HOME/Library/Application Support/obs-studio/plugins"
+  destination="$install_root/obs-tw-adsnooze.plugin"
+  mkdir -p "$install_root"
+  rm -rf "$destination"
+  ditto "$bundle" "$destination"
+  echo "Installed development bundle: $destination"
+  echo "Restart OBS Studio and confirm the module load line in Help > Log Files."
+fi
