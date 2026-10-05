@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "enabled": false,
+  "dry_run": true,
+  "poll_interval_seconds": 15,
+  "twitch": {
+    "client_id": "",
+    "access_token": "",
+    "broadcaster_id": ""
+  },
+  "policy": {
+    "use_audio_activity": true,
+    "use_chat_activity": false,
+    "lead_time_seconds": 90,
+    "past_due_grace_seconds": 15,
+    "retry_cooldown_seconds": 30,
+    "reserve_snoozes": 0
+  },
+  "chat": {
+    "window_seconds": 30,
+    "minimum_messages": 12,
+    "minimum_unique_chatters": 4,
+    "hold_seconds": 10
+  }
+}
